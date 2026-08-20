@@ -1,0 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+.aureus {
+  font-family: 'Archivo', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.aureus input, .aureus table, .aureus .font-mono { font-family: 'JetBrains Mono', monospace; }
+.aureus ::-webkit-scrollbar { width: 8px; height: 8px; }
+.aureus ::-webkit-scrollbar-thumb { background: #d7dbe0; border-radius: 8px; }
+.aureus ::-webkit-scrollbar-track { background: transparent; }

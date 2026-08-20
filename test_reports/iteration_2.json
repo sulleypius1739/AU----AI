@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 2 regression of the AUREUS V4 matched A/B backtest round. Backend: ran the full suite (tests/test_strategy.py 4, tests/test_api_endpoints.py 24, tests/test_backtest_v4.py 9, NEW tests/test_matched_ab_v4.py 12) = 49/49 pass. Verified GET /api/validation all_pass=true (golden bull=A+ BUY, bear=A+ SELL, all negatives non-actionable); GET /api/backtest/report status READY, data_source SYNTHETIC, per_instrument=16, eurusd.matched_ab present with matched_trades=159 and both tp_at_swing/tp_beyond_swing blocks containing win_rate/average_r/sl_before_tp_count/sl_hit_then_tp_would_fill and equal total_trades (true matched set); GET /api/backtest with tp_mode=beyond&manage=true and tp_mode=at&manage=false both 200 with all flattened metrics and profit_factor capped at 999; GET /api/signal?symbol=XAU/USD returns 7 checks and a trade_plan with tp_mode='beyond', target_swing, management block and rr=2.5058 (target strictly beyond the swing). Frontend (public URL, 1920x1080): Backtest lower tab renders report-4y with SYNTHETIC banner, Before-vs-After TP table, NEW Matched A/B table (159 identical entries: 58.49 vs 58.49 win%, 0.983 vs 0.984 avg R, 15/61 vs 16/62 premature), RR distribution bars, 16-card instrument grid; 'Run backtest' fires GET /api/backtest 200 and renders metric cards in ~2s; V4 Validation tab shows Suite PASS; journal login with president@aureus.ai works (httpOnly cookie) and journal panel loads. Two previously reported issues are still open (trade plan shown for non-actionable WAIT status; no login lockout / wildcard CORS with credentials). No blocking defects.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "Still no brute-force lockout: 6 consecutive wrong-password attempts all returned 401, never 423/429 (auth playbook requires lockout after 5 failures). Reproduced by tests/test_auth_playbook.py::test_brute_force_lockout_after_5_failures."},
+      {"endpoint": "CORS middleware (server.py:320)", "issue": "CORS_ORIGINS='*' in backend/.env while allow_credentials=True. Preflight returns Access-Control-Allow-Origin: * and NO Access-Control-Allow-Credentials header, so any cross-origin credentialed call would fail. Needs explicit origin list."},
+      {"endpoint": "GET /api/signal/demo, POST /api/ai/explain", "issue": "UNFIXED from iteration 1: server.py:140 and :230 still call S.build_signal() without pip, so pip=0.0 and tp_mode='beyond' is a no-op (target lands exactly ON the swing) for those endpoints."},
+      {"endpoint": "GET /api/backtest", "issue": "Response still returns metrics twice (nested 'metrics' plus flattened **metrics) plus the whole trades array; payload duplication."},
+      {"endpoint": "GET /api/backtest", "issue": "Default candles=6000 gives a 1-trade sample for XAU/USD -> UI shows Win% 100 / PF 999. Cap now works but the sample is statistically meaningless; add a low-sample warning or raise the default window."},
+      {"endpoint": "GET /api/backtest/report", "issue": "Key inconsistency remains: per_instrument rows use 'trades' while eurusd blocks use 'total_trades'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SignalPanel", "issue": "UNFIXED from iteration 1: XAU/USD status is WAIT with 2 failed gates (No 15M market shift, No valid 10M confirmation) yet a complete trade plan (Entry 1876.43 / Stop 1886.67 / Target 1850.79 / 2.5058R) is rendered and the 'missing' reason banner is suppressed, so a non-actionable setup looks tradable.", "selector": "[data-testid=\"signal-panel\"]", "priority": "MEDIUM"},
+      {"component": "Backtest metric cards", "issue": "Cap works (shows 999 instead of 1e9) but a 1-trade run displays 'WIN % 100 / PROFIT FACTOR 999' with no sample-size caveat.", "selector": "[data-testid=\"run-backtest-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Backtest lower dock", "issues": ["Dock still fixed at h-56, so the 16-instrument grid and matched A/B table sit below the fold on 1080p and require inner scrolling", "Caption 'the TP-beyond adjustment mainly widened RR' is not supported by the data in the same table: matched A/B avg R is 0.983 -> 0.984 and profit factor 3.561 -> 3.524, i.e. essentially unchanged/slightly worse. Reword to state the honest finding."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_matched_ab_v4.py",
+    "/app/backend/tests/test_auth_playbook.py",
+    "/app/test_reports/pytest/iter2_all.xml",
+    "/app/test_reports/pytest/iter2_matched.xml"
+  ],
+  "action_items": [
+    "SignalPanel: only render the Entry/Stop/Target/R:R grid when signal.actionable is true (or clearly mark it as a hypothetical plan and keep showing signal.missing)",
+    "Add login brute-force lockout (>=5 failures -> 423/429) and replace CORS_ORIGINS='*' with an explicit origin list since allow_credentials=True",
+    "Pass pip=D.pip_size(symbol) in /api/signal/demo and /api/ai/explain, or make pip a required arg of build_signal",
+    "Reword the Report4Y caption: matched A/B shows TP-beyond changed nothing materially (win% identical, PF slightly lower) - state that explicitly instead of 'mainly widened RR'",
+    "De-duplicate the /api/backtest response contract and normalise report.json keys (trades -> total_trades)",
+    "Consider a larger TP buffer study: at TP_PIPS=3 the buffer is ~0.3 pip-of-R for EUR/USD, which is why matched A/B is a no-op; sweeping the buffer (e.g. 0.05R-0.15R of risk) would make the experiment conclusive"
+  ],
+  "critical_code_review_comments": [
+    "strategy.py: build_signal (lines 147-185) still re-implements the target search inline instead of calling the new shared target_for()/entry_setup() helpers. run_backtest uses build_signal while run_ab_matched uses entry_setup+target_for, so the A/B comparison and the live/backtest path are two independent implementations of the same rule and can silently diverge. Refactor build_signal to use entry_setup+target_for.",
+    "strategy.py: build_signal(pip=0.0) default still silently disables the TP-beyond feature for callers that forget pip (two such callers remain in server.py).",
+    "backtest.py _simulate: with manage=True the +1R partial is banked before the target check within the same candle, which can overstate the managed win rate (88.51%) - keep labelling it non-headline.",
+    "backtest.py compute_metrics: min(gross_win/gross_loss, 999.0) hides the 'no losses' case; consider returning null so the UI can render an infinity glyph.",
+    "server.py:320 allow_origins from CORS_ORIGINS default '*' combined with allow_credentials=True is an invalid CORS combination for cookie auth."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_matched_ab_v4.py",
+    "/app/backend/tests/test_auth_playbook.py",
+    "/app/frontend/src/App.js (added data-testid=\"matched-ab-block\"/\"matched-ab-table\" to the new Matched A/B table only)"
+  ],
+  "success_rate": {"backend": "100% of feature tests (49/49); 2/4 auth-playbook hardening checks fail (lockout, CORS)", "frontend": "100% of required UI elements verified"},
+  "seed_data_creation": "None. Logged in as president@aureus.ai to verify the journal panel; no journal entries created.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "president@aureus.ai / Aureus2020! - works. bcrypt hash format $2b$ verified, httpOnly+Secure+SameSite=None cookies set on login, /api/auth/me returns user without password_hash, seed_admin re-hashes on password change (idempotent).",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests -q -p no:randomly` (49 pass, ~30s). test_matched_ab_v4.py is the iteration-2 matched A/B regression suite (validation shape is {all_pass, results:{golden_bullish, golden_bearish, negatives}}); test_auth_playbook.py has 2 EXPECTED failures until lockout + explicit CORS origins are implemented. Frontend Matched A/B table now has data-testid=\"matched-ab-table\". NOTE: report-4y section headings are CSS-uppercased, so use text_content() not inner_text() when asserting 'Before vs After' / 'RR distribution'. SYNTHETIC data is intentional - do not flag.",
+  "rca_of_the_issue": "The matched A/B harness is correctly implemented (identical 159-entry set, management off, both TP modes simulated on the same bars) and proves TP-beyond-swing does not improve outcomes: win rate 58.49% both modes, avg R 0.983 vs 0.984, premature stop-outs 15/61 vs 16/62. Root cause of the null result is buffer magnitude: TP_PIPS=3 shifts the target by 3 pips while typical risk is tens of pips, so the target rarely moves across a bar's extreme; the extra distance instead adds one more stop-before-target case. The requested 50-60% win-rate target is met (58.49%) by the base strategy, not by the TP adjustment."
+}

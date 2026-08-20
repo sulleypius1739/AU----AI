@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="12" time="1.996" timestamp="2026-08-20T03:23:39.297763+00:00" hostname="agent-env-b1ba82b2-5c3a-4b56-907a-b012fdf6842e"><testcase classname="tests.test_matched_ab_v4.TestBacktestEndpoint" name="test_beyond_managed" time="0.712" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_status_and_source" time="0.150" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_matched_ab_present" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_matched_same_entry_count" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_beyond_rr_not_lower" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_per_instrument_16" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_before_after_blocks" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_profit_factor_capped_in_report" time="0.000" /><testcase classname="tests.test_matched_ab_v4.TestMatchedAB" name="test_no_mongo_id" time="0.001" /><testcase classname="tests.test_matched_ab_v4.TestSignal" name="test_xauusd_plan" time="0.656" /><testcase classname="tests.test_matched_ab_v4.TestBacktestEndpoint" name="test_at_unmanaged" time="0.668" /><testcase classname="tests.test_matched_ab_v4.TestValidation" name="test_all_pass" time="0.057"><failure message="KeyError: 'golden_bullish'">self = &lt;test_matched_ab_v4.TestValidation object at 0xfe9278c81b90&gt;
+client = &lt;requests.sessions.Session object at 0xfe92785b11d0&gt;
+
+    def test_all_pass(self, client):
+        r = client.get(f"{BASE_URL}/api/validation", timeout=90)
+        assert r.status_code == 200, r.text[:300]
+        d = r.json()
+        assert d["all_pass"] is True, d
+&gt;       assert d["golden_bullish"]["status"] == "A+ BUY"
+               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'golden_bullish'
+
+tests/test_matched_ab_v4.py:39: KeyError</failure></testcase></testsuite></testsuites>

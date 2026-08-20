@@ -21,3 +21,9 @@ frontend/.env
 .DS_Store
 .idea/
 .vscode/
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials

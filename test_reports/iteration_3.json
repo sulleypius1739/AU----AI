@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 3 verified the new provider/fallback + alerts + replay round. Backend: full suite `cd /app/backend && python -m pytest tests -q -p no:randomly` = 78 passed / 2 failed (only the 2 known auth-playbook gaps). test_strategy.py 4/4 pass. NEW tests/test_providers_v4.py (27 tests) all pass: providers.has_key()==False, twelvedata_ohlc/search raise ProviderError('API_KEY_MISSING'), TD_INTERVAL covers 5M/10M/15M/1H/4H/1D, data.get_candles returns (candles,'synthetic',state) for every timeframe with OHLC sanity + determinism, state='HISTORICAL' when limit>300, and with a dummy key + monkeypatched provider raising API_RATE_LIMIT the source becomes 'synthetic (fallback: API_RATE_LIMIT)' with the full limit still returned. GET /api/candles 200 for all 6 timeframes with source='synthetic', ascending timestamps, no _id leakage, unknown symbol ZZZ/ZZZ still 200. GET /api/instruments?q=gold -> source='builtin' with XAU/USD; empty q -> 16 built-ins; no-match -> []. GET /api/signal?symbol=EUR/USD -> 200 with exactly 7 V4 checks. GET /api/admin/status data_feed='ONLINE (SYNTHETIC)', validation_all_pass=true, database ONLINE; GET /api/validation all_pass=true. Frontend (public URL, 1920x1080): header alerts-toggle toggles bell/bell-off class state on and back with zero console errors; replay-toggle enters REPLAY (state chip flips REAL-TIME->REPLAY), replay-controls with play/step/reset render, counter starts at 'bar 60/300 - no look-ahead'; NO LOOK-AHEAD VERIFIED by diffing the on-screen last close against GET /api/candles for the same index across 3 manual steps and an autoplay run (60->61->62->63->68, every close matched the API array element idx-1); play advances ~2/s, pause holds the index, reset returns to bar 60, second toggle exits replay and restores REAL-TIME; entering replay after switching to 1H re-fetches 300 bars. hypothetical-plan-label renders (\"HYPOTHETICAL PLAN - No fresh 1H POI\") above the Entry/Stop/Target grid for the non-actionable XAU/USD WAIT signal, and is absent when the signal is actionable. Alert path exercised by route-mocking /api/signal to 'A+ BUY': alert-banner appears, WebAudio beep runs without any console/page error, banner auto-dismisses after 8s. Backtest tab still renders report-4y + matched-ab-table.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "STILL UNFIXED (3rd iteration): no brute-force lockout. 6 consecutive wrong-password attempts all return 401, never 423/429. tests/test_auth_playbook.py::test_brute_force_lockout_after_5_failures fails."},
+      {"endpoint": "CORS middleware (server.py:335)", "issue": "STILL UNFIXED: CORS_ORIGINS='*' in backend/.env with allow_credentials=True. Preflight returns Access-Control-Allow-Origin: * and no Access-Control-Allow-Credentials, so credentialed cross-origin calls would fail. Needs an explicit origin list."},
+      {"endpoint": "aureus/providers.py twelvedata_ohlc", "issue": "10M is requested as '5min' and then resampled in get_candles, but the outputsize doubling uses `outputsize*2` while get_candles already passes limit (not limit*TF ratio) - with a real key a 10M request for N bars will return ~N 5M bars -> only ~N/2 10M bars after resample (short series). Untestable without a key; fix the size math (limit * 2 in TD_INTERVAL terms) before enabling the key."},
+      {"endpoint": "aureus/providers.py", "issue": "No provider-response caching/rate-limit guard: /api/signal requests outputsize=3000 per call and the frontend polls the signal, which would blow the Twelve Data free-tier 8 req/min limit immediately once a key is added. Add a TTL cache keyed by (symbol, timeframe)."},
+      {"endpoint": "GET /api/signal/demo, POST /api/ai/explain", "issue": "UNFIXED from iterations 1-2: build_signal called without pip, so pip=0.0 and tp_mode='beyond' is a no-op for those endpoints."},
+      {"endpoint": "GET /api/backtest, GET /api/backtest/report", "issue": "UNFIXED: metrics duplicated (nested + flattened) in the response; report.json uses 'trades' in per_instrument vs 'total_trades' elsewhere."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Replay mode (App.js toggleReplay / tf+symbol effects)", "issue": "Changing the timeframe (or symbol) WHILE in replay mode does not re-fetch replayData. Reproduced: enter replay on 15M (bar 60 close 1958.810347), click 1D -> header label changes to '1D' and the counter stays 'bar 60/300' but the chart/last price still show the 15M series (1D bar-60 close from /api/candles does not match). The user sees data mislabelled as another timeframe.", "selector": "[data-testid=\"replay-toggle\"] + timeframe buttons", "priority": "MEDIUM"},
+      {"component": "Replay controls", "issue": "replay-step / replay-play are never disabled at the end of the dataset (index caps at 300 silently) and the 500ms play interval keeps running at the end - no 'end of replay' state and a pointless timer. Also there is no speed control and no way to load more history than the hardcoded limit=300.", "selector": "[data-testid=\"replay-controls\"]", "priority": "LOW"},
+      {"component": "beep() (App.js:13)", "issue": "Creates a new AudioContext on every alert and never closes it (leak over a long session) and never calls ctx.resume(); on Chrome's autoplay policy the alert sound is silently dropped if the user has not interacted with the page yet. Consider one lazily-created shared context resumed on the alerts-toggle click.", "selector": "[data-testid=\"alerts-toggle\"]", "priority": "LOW"},
+      {"component": "Alert banner", "issue": "Cosmetic: rendered text reads 'XAU/USD - AUREUS A+ BUYdetected' (missing space before 'detected' in the rendered layout).", "selector": "[data-testid=\"alert-banner\"]", "priority": "LOW"},
+      {"component": "Alerts toggle", "issue": "No visible confirmation of whether browser notifications were actually granted/denied - the bell only reflects local alertsOn state, so a user who denied permission still sees an 'on' bell and gets no OS notification.", "selector": "[data-testid=\"alerts-toggle\"]", "priority": "LOW"},
+      {"component": "Backtest metric cards", "issue": "UNFIXED from iteration 2: a 1-trade run still displays 'WIN % 100 / PROFIT FACTOR 999' with no sample-size caveat.", "selector": "[data-testid=\"run-backtest-btn\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Terminal header / lower dock", "issues": ["Lower dock is still fixed at h-56, so the matched A/B table and the 16-instrument grid require inner scrolling on 1080p (unchanged from iteration 2)", "Replay counter text 'bar 60/300 - no look-ahead' is 11px slate-400 on white - low contrast for a primary status readout", "In REPLAY the signal StatusBadge is hidden from the chart header but the right-hand signal panel keeps showing the live real-time signal + trade plan, which is confusing next to historical replay bars (consider dimming/labelling the panel as live-only while replaying)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_providers_v4.py",
+    "/app/backend/tests/test_auth_playbook.py",
+    "/app/test_reports/pytest/iter3_all.xml",
+    "/app/test_reports/pytest/iter3_providers.xml"
+  ],
+  "action_items": [
+    "Re-fetch replayData when symbol/timeframe changes while replayOn (or exit replay on change) - currently the chart shows 15M bars labelled 1D",
+    "Add login brute-force lockout (>=5 failures -> 423/429) and replace CORS_ORIGINS='*' with an explicit origin list (allow_credentials=True) - open since iteration 1",
+    "Fix the 10M outputsize math in providers.twelvedata_ohlc and add a TTL cache / rate-limit guard before a real TWELVE_DATA_API_KEY is configured (free tier is 8 req/min; /api/signal asks for 3000 bars per call)",
+    "Disable replay-step/replay-play at end of data and stop the playback interval; optionally add a speed selector",
+    "Reuse a single AudioContext and resume() it on a user gesture so the A+ beep is not swallowed by autoplay policy",
+    "Pass pip=D.pip_size(symbol) in /api/signal/demo and /api/ai/explain (open since iteration 1)"
+  ],
+  "critical_code_review_comments": [
+    "data.get_candles() correctly never raises: provider errors are caught and the reason is surfaced in `source` - verified via monkeypatched API_RATE_LIMIT. Good.",
+    "server.py D_provider_key() is a helper defined below its first use and does an import inside the function on every request; move `from aureus import providers as P` to module scope and rename to a private helper.",
+    "/api/signal ignores the timeframe/limit contract of get_candles and calls P.twelvedata_ohlc directly, duplicating the fallback logic that already exists in data.get_candles - route it through get_candles so `source` is reported consistently in the signal payload (the frontend has no way to know the signal was computed on synthetic data).",
+    "frontend App.js is 676 lines with Chart/SignalPanel/Report4Y inline; split into components/ before it grows further.",
+    "replayIdx initial value 60 is a magic number duplicated in toggleReplay and replay-reset; extract a REPLAY_START constant."
+  ],
+  "updated_files": ["/app/backend/tests/test_providers_v4.py", "/app/test_reports/iteration_3.json"],
+  "success_rate": {"backend": "97.5% (78/80; 2 known auth-playbook failures)", "frontend": "92% (all replay/alerts/hypothetical-label assertions pass; 1 medium replay timeframe-staleness bug)"},
+  "seed_data_creation": "None. Synthetic deterministic candles only; no DB writes.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "president@aureus.ai / Aureus2020! (login + httpOnly cookie verified by tests/test_auth_playbook.py::test_login_sets_httponly_cookies)",
+  "context_for_next_testing_agent": "Run `cd /app/backend && python -m pytest tests -q -p no:randomly` (80 tests, ~35s; expect exactly 2 failures in test_auth_playbook.py until lockout + explicit CORS origins land). NEW file tests/test_providers_v4.py is the provider/fallback regression suite - it monkeypatches TWELVE_DATA_API_KEY for the fallback test only, so source='synthetic' everywhere else. Frontend replay assertions: replay counter text is 'bar N/300 - no look-ahead' inside [data-testid=\"replay-controls\"]; the chart is a CANVAS ([data-testid=\"price-chart\"]) so you cannot count candles - instead compare the header last-close text against GET /api/candles?...&limit=300 at index N-1 to prove no look-ahead. To exercise the A+ alert path, page.route('**/api/signal?**') and rewrite status to 'A+ BUY' - [data-testid=\"alert-banner\"] then appears and auto-dismisses after 8s. Known open: switching tf/symbol during replay does not refetch replayData.",
+  "rca_of_the_issue": "Replay staleness RCA: toggleReplay() fetches /api/candles once with the tf/symbol current at click time and stores it in replayData; there is no useEffect watching [symbol, tf] while replayOn, so subsequent tf/symbol changes only update the header label and the live `candles` state (which is not rendered in replay because shownCandles = replayData.slice(0, replayIdx)). Fix: add an effect that re-fetches replayData and resets replayIdx when symbol/tf change while replayOn, or force-exit replay on change."
+}

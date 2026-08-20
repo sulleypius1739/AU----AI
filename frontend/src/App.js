@@ -4,10 +4,24 @@ import {
   Search, TrendingUp, TrendingDown, Activity, Crosshair, Minus, Slash,
   Square, Ruler, Type, Pencil, MousePointer2, Zap, Newspaper, Shield,
   BarChart3, BookOpen, Server, Bot, CheckCircle2, XCircle, Clock, Target,
+  Bell, BellOff, Play, Pause, SkipForward, RotateCcw,
 } from "lucide-react";
 import "./App.css";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+function beep(up) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = "sine"; o.frequency.value = up ? 880 : 440;
+    g.gain.setValueAtTime(0.001, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    o.start(); o.stop(ctx.currentTime + 0.5);
+  } catch (e) { /* audio not available */ }
+}
 const TIMEFRAMES = ["5M", "10M", "15M", "1H", "4H", "1D"];
 const C = { bull: "#16A085", bear: "#EF5350", blue: "#2962FF", gold: "#C79235", grid: "#EDF0F3" };
 
@@ -124,6 +138,13 @@ export default function App() {
   const [validation, setValidation] = useState(null);
   const [backtest, setBacktest] = useState(null);
   const [report, setReport] = useState(null);
+  const [alertsOn, setAlertsOn] = useState(true);
+  const [alertBanner, setAlertBanner] = useState(null);
+  const lastAlertRef = useRef(null);
+  const [replayOn, setReplayOn] = useState(false);
+  const [replayData, setReplayData] = useState([]);
+  const [replayIdx, setReplayIdx] = useState(60);
+  const [replayPlaying, setReplayPlaying] = useState(false);
   const [admin, setAdmin] = useState(null);
   const [ai, setAi] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
@@ -174,6 +195,44 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  // A+ alerts: on-screen banner + sound + browser notification
+  useEffect(() => {
+    if (!signal || !alertsOn) return;
+    const st = signal.status;
+    if ((st === "A+ BUY" || st === "A+ SELL")) {
+      const key = `${signal.symbol}:${st}`;
+      if (lastAlertRef.current !== key) {
+        lastAlertRef.current = key;
+        const msg = `${signal.symbol} — AUREUS ${st} detected`;
+        setAlertBanner(msg);
+        beep(st === "A+ BUY");
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification("AUREUS AI", { body: msg });
+        }
+        setTimeout(() => setAlertBanner(null), 8000);
+      }
+    } else {
+      lastAlertRef.current = null;
+    }
+  }, [signal, alertsOn]);
+
+  // Replay playback
+  useEffect(() => {
+    if (!replayOn || !replayPlaying) return;
+    const id = setInterval(() => setReplayIdx((x) => Math.min(x + 1, replayData.length)), 500);
+    return () => clearInterval(id);
+  }, [replayOn, replayPlaying, replayData.length]);
+
+  const toggleReplay = async () => {
+    if (replayOn) { setReplayOn(false); setReplayPlaying(false); return; }
+    const { data } = await axios.get(`${API}/candles`, { params: { symbol, timeframe: tf, limit: 300 } });
+    setReplayData(data.candles); setReplayIdx(60); setReplayPlaying(false); setReplayOn(true);
+  };
+  const enableNotifications = () => {
+    setAlertsOn((v) => !v);
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  };
+
   const doSearch = async (v) => {
     setQ(v);
     const { data } = await axios.get(`${API}/instruments`, { params: { q: v } });
@@ -195,6 +254,8 @@ export default function App() {
     const { data } = await axios.post(`${API}/ai/explain`, { symbol, direction: dir });
     setAi(data); setAiLoading(false);
   };
+
+  const shownCandles = replayOn ? replayData.slice(0, replayIdx) : candles;
 
   return (
     <div className="h-screen w-screen flex flex-col bg-white text-slate-800 overflow-hidden aureus">
@@ -230,8 +291,18 @@ export default function App() {
           ))}
         </div>
         <div className="ml-auto flex items-center gap-2 text-xs">
-          <span className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-50 text-emerald-600 font-semibold">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />{state}
+          <button data-testid="alerts-toggle" onClick={enableNotifications} title="A+ alerts"
+            className={`w-8 h-8 rounded flex items-center justify-center ${alertsOn ? "bg-amber-50 text-amber-600" : "text-slate-400 hover:bg-slate-100"}`}>
+            {alertsOn ? <Bell size={15} /> : <BellOff size={15} />}
+          </button>
+          <button data-testid="replay-toggle" onClick={toggleReplay} title="Replay mode"
+            className={`px-2.5 h-8 rounded text-xs font-bold flex items-center gap-1 ${replayOn ? "bg-slate-800 text-white" : "text-slate-500 hover:bg-slate-100"}`}>
+            <RotateCcw size={13} /> Replay
+          </button>
+          <span className="flex items-center gap-1 px-2 py-1 rounded font-semibold"
+            style={replayOn ? { background: "#eef2ff", color: C.blue } : { background: "#ecfdf5", color: C.bull }}>
+            <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: replayOn ? C.blue : C.bull }} />
+            {replayOn ? "REPLAY" : state}
           </span>
         </div>
       </header>
@@ -252,11 +323,28 @@ export default function App() {
           <div className="flex items-center gap-3 px-4 h-9 border-b border-slate-100 text-sm">
             <span className="font-black">{symbol}</span>
             <span className="text-slate-400">·{tf}</span>
-            {candles.length > 0 && <span className="font-bold" style={{ color: candles.at(-1).close >= candles.at(-1).open ? C.bull : C.bear }}>
-              {candles.at(-1).close}</span>}
-            {signal && <StatusBadge status={signal.status} />}
+            {shownCandles.length > 0 && <span className="font-bold" style={{ color: shownCandles.at(-1).close >= shownCandles.at(-1).open ? C.bull : C.bear }}>
+              {shownCandles.at(-1).close}</span>}
+            {signal && !replayOn && <StatusBadge status={signal.status} />}
+            {replayOn && (
+              <div data-testid="replay-controls" className="ml-auto flex items-center gap-1">
+                <button data-testid="replay-play" onClick={() => setReplayPlaying((p) => !p)}
+                  className="w-7 h-7 rounded flex items-center justify-center bg-slate-100 hover:bg-slate-200">
+                  {replayPlaying ? <Pause size={13} /> : <Play size={13} />}</button>
+                <button data-testid="replay-step" onClick={() => setReplayIdx((x) => Math.min(x + 1, replayData.length))}
+                  className="w-7 h-7 rounded flex items-center justify-center bg-slate-100 hover:bg-slate-200"><SkipForward size={13} /></button>
+                <button data-testid="replay-reset" onClick={() => { setReplayIdx(60); setReplayPlaying(false); }}
+                  className="w-7 h-7 rounded flex items-center justify-center bg-slate-100 hover:bg-slate-200"><RotateCcw size={13} /></button>
+                <span className="text-[11px] text-slate-400 ml-1">bar {replayIdx}/{replayData.length} · no look-ahead</span>
+              </div>
+            )}
           </div>
           <div className="flex-1 relative">
+            {alertBanner && (
+              <div data-testid="alert-banner" className="absolute top-2 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-lg shadow-lg text-white text-xs font-bold flex items-center gap-2 animate-pulse" style={{ background: C.gold }}>
+                <Bell size={14} /> {alertBanner}
+              </div>
+            )}
             {err && (
               <div data-testid="data-feed-error" className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-4 py-2 rounded bg-red-50 border border-red-200 text-red-600 text-xs font-bold">
                 {err}
@@ -265,7 +353,7 @@ export default function App() {
             {loading && candles.length === 0 && !err && (
               <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">Loading market data…</div>
             )}
-            <Chart candles={candles} signal={signal} />
+            <Chart candles={shownCandles} signal={replayOn ? null : signal} />
           </div>
           {/* Lower dock */}
           <div className="h-56 border-t border-slate-200 flex flex-col shrink-0">
@@ -341,6 +429,11 @@ export default function App() {
           <div className="flex-1 overflow-auto p-3">
             {tab === "signal" && signal && (
               <div data-testid="signal-panel">
+                {replayOn && (
+                  <div className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-1 mb-2">
+                    LIVE signal — not synced to replay bars
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-2">
                   <div><div className="text-[11px] text-slate-400 uppercase">AUREUS AI · {signal.symbol}</div>
                     <div className="flex items-center gap-1 font-black text-sm">

@@ -160,3 +160,27 @@ def parse_csv(content: str, symbol: str = "UPLOAD") -> List[Dict]:
             "volume": float(r["volume"]) if "volume" in df.columns else 0.0,
         })
     return out
+
+
+
+def get_candles(symbol: str, timeframe: str = "5M", limit: int = 300):
+    """Return (candles, source, state). Uses live provider when a key is set, else synthetic.
+
+    Falls back to synthetic on any provider error so the terminal never goes blank
+    (the reason is surfaced in `source`).
+    """
+    from . import providers as P
+    state = "HISTORICAL" if limit > 300 else "REAL-TIME"
+    if P.has_key():
+        try:
+            rows = P.twelvedata_ohlc(symbol, timeframe, outputsize=limit)
+            if timeframe == "10M":
+                rows = resample(rows, "10M")
+            return rows[-limit:], "twelvedata", state
+        except P.ProviderError as e:
+            base = generate_5m(symbol, count=max(limit * TF_MINUTES.get(timeframe, 5) // 5, 500))
+            series = resample(base, timeframe) if timeframe != "5M" else base
+            return series[-limit:], f"synthetic (fallback: {e.code})", state
+    base = generate_5m(symbol, count=max(limit * TF_MINUTES.get(timeframe, 5) // 5, 500))
+    series = resample(base, timeframe) if timeframe != "5M" else base
+    return series[-limit:], "synthetic", state

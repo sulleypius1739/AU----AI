@@ -100,19 +100,30 @@ async def me(request: Request):
 async def instruments(q: str = ""):
     q = q.strip().lower()
     if not q:
-        return {"results": INSTRUMENTS}
+        return {"results": INSTRUMENTS, "source": "twelvedata" if D_provider_key() else "builtin"}
+    if D_provider_key():
+        try:
+            from aureus import providers as P
+            res = P.search(q)
+            if res:
+                return {"results": res, "source": "twelvedata"}
+        except Exception:
+            pass
     return {"results": [i for i in INSTRUMENTS
                         if q in i["symbol"].lower() or q in i["name"].lower()
-                        or q in i["asset_class"].lower()]}
+                        or q in i["asset_class"].lower()], "source": "builtin"}
+
+
+def D_provider_key():
+    from aureus import providers as P
+    return P.has_key()
 
 
 @api.get("/candles")
 async def candles(symbol: str = "XAU/USD", timeframe: str = "5M", limit: int = 300):
-    base = D.generate_5m(symbol, count=max(limit * D.TF_MINUTES.get(timeframe, 5) // 5, 500))
-    series = D.resample(base, timeframe) if timeframe != "5M" else base
-    data_state = "HISTORICAL" if limit > 300 else "REAL-TIME"
-    return {"symbol": symbol, "timeframe": timeframe, "state": data_state,
-            "candles": series[-limit:]}
+    series, source, state = D.get_candles(symbol, timeframe, limit)
+    return {"symbol": symbol, "timeframe": timeframe, "state": state,
+            "source": source, "candles": series}
 
 
 @api.post("/upload-csv")
@@ -128,7 +139,14 @@ async def upload_csv(file: UploadFile = File(...), symbol: str = "UPLOAD"):
 # ------------------------------ STRATEGY / SIGNAL ------------------------------
 @api.get("/signal")
 async def signal(symbol: str = "XAU/USD", equity: float = 10000.0, risk_pct: float = 1.0):
-    base = D.generate_5m(symbol, count=3000)
+    from aureus import providers as P
+    if P.has_key():
+        try:
+            base = P.twelvedata_ohlc(symbol, "5M", outputsize=3000)
+        except P.ProviderError:
+            base = D.generate_5m(symbol, count=3000)
+    else:
+        base = D.generate_5m(symbol, count=3000)
     tf = D.multi_timeframe(base)
     return S.build_signal(tf, symbol=symbol, equity=equity, risk_pct=risk_pct,
                           pip=D.pip_size(symbol), tp_mode="beyond")
@@ -294,7 +312,7 @@ async def admin_status():
         db_ok = False
     return {
         "aureus_engine": "ONLINE",
-        "data_feed": "ONLINE (SYNTHETIC)",
+        "data_feed": "ONLINE (TWELVE DATA)" if D_provider_key() else "ONLINE (SYNTHETIC)",
         "signal_engine": "READY",
         "risk_engine": "READY",
         "news_engine": "ONLINE (REFERENCE)",

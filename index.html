@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AUREUS AI — Terminal</title>
+<style>
+  :root{--bull:#16A085;--bear:#EF5350;--blue:#2962FF;--gold:#C79235;--grid:#EDF0F3}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Archivo',system-ui,sans-serif;background:#fff;color:#1e293b;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{height:52px;display:flex;align-items:center;gap:14px;padding:0 14px;border-bottom:1px solid #e2e8f0}
+  .logo{width:28px;height:28px;border-radius:6px;background:var(--gold);color:#fff;font-weight:900;display:flex;align-items:center;justify-content:center}
+  .brand{font-weight:900;font-size:14px}.brand span{color:var(--gold)}
+  input,select{font-family:'JetBrains Mono',monospace}
+  #sym{height:32px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;padding:0 12px;font-weight:700;width:150px}
+  .tfbtn{height:32px;padding:0 10px;border:none;background:transparent;border-radius:6px;font-weight:700;cursor:pointer;color:#64748b}
+  .tfbtn.on{background:#1e293b;color:#fff}
+  .state{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#16A085;font-weight:700}
+  .dot{width:8px;height:8px;border-radius:50%;background:#16A085;animation:p 1.5s infinite}@keyframes p{50%{opacity:.3}}
+  main{flex:1;display:flex;overflow:hidden}
+  .chart-wrap{flex:1;position:relative}
+  canvas{width:100%;height:100%}
+  aside{width:330px;border-left:1px solid #e2e8f0;overflow:auto;padding:14px}
+  .badge{padding:4px 12px;border-radius:999px;font-size:11px;font-weight:800;border:1px solid}
+  .row{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px}
+  .row .ic{width:16px;height:16px;border-radius:50%;flex-shrink:0;margin-top:1px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px}
+  .cell{border:1px solid #f1f5f9;border-radius:6px;padding:6px;text-align:center}
+  .cell .k{font-size:10px;color:#94a3b8}.cell .v{font-size:12px;font-weight:900}
+  .muted{color:#94a3b8}.err{color:var(--bear);font-weight:700;padding:10px}
+  h4{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:2px 0}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">A</div><div class="brand">AUREUS <span>AI</span></div>
+  <input id="sym" value="XAU/USD" />
+  <div id="tfs"></div>
+  <div class="state"><span class="dot"></span><span id="stateLabel">REAL-TIME</span></div>
+</header>
+<main>
+  <div class="chart-wrap"><canvas id="cv"></canvas><div id="loading" class="err muted" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">Loading market data…</div></div>
+  <aside id="panel"><div class="muted">Loading AUREUS analysis…</div></aside>
+</main>
+<script>
+// Configure your backend base URL here (or leave same-origin):
+const API = (window.AUREUS_API || '') + '/api';
+const TF = ['5M','10M','15M','1H','4H','1D'];
+let symbol = 'XAU/USD', tf = '15M', candles = [], signal = null;
+
+const tfs = document.getElementById('tfs');
+TF.forEach(t => { const b = document.createElement('button'); b.className='tfbtn'+(t===tf?' on':''); b.textContent=t;
+  b.onclick=()=>{tf=t;[...tfs.children].forEach(c=>c.classList.remove('on'));b.classList.add('on');load();}; tfs.appendChild(b); });
+document.getElementById('sym').addEventListener('change', e => { symbol = e.target.value.toUpperCase(); load(); });
+
+async function jget(u){ const r = await fetch(API+u); if(!r.ok) throw new Error(r.status); return r.json(); }
+
+async function load(){
+  document.getElementById('loading').style.display='block';
+  try{
+    const c = await jget(`/candles?symbol=${encodeURIComponent(symbol)}&timeframe=${tf}&limit=300`);
+    candles = c.candles; document.getElementById('stateLabel').textContent = c.state;
+    document.getElementById('loading').style.display='none';
+    draw();
+    signal = await jget(`/signal?symbol=${encodeURIComponent(symbol)}`);
+    renderPanel();
+    draw();
+  }catch(e){
+    document.getElementById('loading').innerHTML = `<span class="err">DATA FEED ERROR — ${e.message}</span>`;
+    document.getElementById('panel').innerHTML = `<div class="err">SIGNAL ENGINE ERROR: ${e.message}</div>`;
+  }
+}
+
+function draw(){
+  const cv = document.getElementById('cv'), dpr = devicePixelRatio||1;
+  const w = cv.clientWidth, h = cv.clientHeight; cv.width=w*dpr; cv.height=h*dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr,dpr); ctx.clearRect(0,0,w,h);
+  if(!candles.length) return;
+  const data = candles.slice(-160);
+  const hi = Math.max(...data.map(d=>d.high)), lo = Math.min(...data.map(d=>d.low));
+  const pad=(hi-lo)*0.08||1, top=hi+pad, bot=lo-pad, padR=64, padB=20;
+  const cw=(w-padR)/data.length, y=p=>((top-p)/(top-bot))*(h-padB);
+  ctx.font='10px monospace';
+  for(let i=0;i<=5;i++){const yy=(i/5)*(h-padB);ctx.strokeStyle='#EDF0F3';ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(w-padR,yy);ctx.stroke();
+    ctx.fillStyle='#94a3b8';const pr=top-(i/5)*(top-bot);ctx.fillText(pr.toFixed(pr>100?2:5),w-padR+4,yy+3);}
+  if(signal&&signal.poi){ctx.fillStyle='rgba(199,146,53,.14)';ctx.fillRect(0,y(signal.poi.high),w-padR,y(signal.poi.low)-y(signal.poi.high));}
+  data.forEach((d,i)=>{const x=i*cw+cw/2,up=d.close>=d.open;ctx.strokeStyle=up?'#16A085':'#EF5350';ctx.fillStyle=up?'#16A085':'#EF5350';
+    ctx.beginPath();ctx.moveTo(x,y(d.high));ctx.lineTo(x,y(d.low));ctx.stroke();
+    const bw=Math.max(cw*0.6,1),yo=y(d.open),yc=y(d.close);ctx.fillRect(x-bw/2,Math.min(yo,yc),bw,Math.max(Math.abs(yc-yo),1));});
+  if(signal&&signal.trade_plan){const p=signal.trade_plan;
+    const line=(pr,c,l)=>{if(pr>top||pr<bot)return;ctx.strokeStyle=c;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(0,y(pr));ctx.lineTo(w-padR,y(pr));ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=c;ctx.fillText(l,4,y(pr)-3);};
+    line(p.entry,'#2962FF','ENTRY '+p.entry);line(p.stop,'#EF5350','STOP '+p.stop);line(p.target,'#16A085','TARGET '+p.target);}
+}
+
+function chk(o){const c=o.passed?'#16A085':'#cbd5e1';return `<div class="row"><div class="ic" style="background:${c}"></div><div><div style="font-weight:700;color:${o.passed?'#334155':'#94a3b8'}">${o.label}</div><div class="muted">${o.detail}</div></div></div>`;}
+
+function renderPanel(){
+  if(!signal) return;
+  const s=signal, badgeColors={'A+ BUY':'#16A085','A+ SELL':'#EF5350'}, bc=badgeColors[s.status]||'#94a3b8';
+  const ch=s.checks;
+  let plan='';
+  if(s.trade_plan){const p=s.trade_plan;plan=`<div class="grid3">
+    ${[['Entry',p.entry],['Stop',p.stop],['Target',p.target],['Risk','$'+p.risk_amount],['Reward','$'+p.potential_profit],['R:R',p.rr+'R']]
+      .map(([k,v])=>`<div class="cell"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('')}</div>`;
+  }else plan=`<div class="row" style="background:#fffbeb;border-radius:6px;padding:8px">${s.missing||'Waiting for sequence'}</div>`;
+  document.getElementById('panel').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><h4>AUREUS AI · ${s.symbol}</h4><div style="font-weight:900">${s.direction.toUpperCase()}</div></div>
+      <span class="badge" style="color:${bc};border-color:${bc}">${s.status}</span></div>
+    <div style="margin:10px 0;background:#f8fafc;border-radius:8px;padding:6px 10px">
+      ${chk({label:'4H Direction',...ch.htf_direction})}
+      ${chk({label:'1H Fresh POI',...ch.poi})}
+      ${chk({label:'15M Market Shift',...ch.market_shift})}
+      ${chk({label:'15M Liquidity Sweep',...ch.liquidity_sweep})}
+      ${chk({label:'10M Confirmation',...ch.ltf_confirmation})}
+      ${chk({label:'POI Mitigation',...ch.poi_mitigation})}
+      ${chk({label:'R:R (2R–5R)',...ch.rr})}
+    </div>${plan}
+    <p class="muted" style="font-style:italic;font-size:11px;margin-top:12px">${s.philosophy}</p>`;
+}
+
+window.addEventListener('resize', draw);
+load();
+setInterval(()=>{ if(!candles.length)return; const last={...candles[candles.length-1]};
+  last.close=+(last.close+(Math.random()-.5)*last.close*0.0006).toFixed(5);
+  last.high=Math.max(last.high,last.close);last.low=Math.min(last.low,last.close);
+  candles[candles.length-1]=last; draw(); },2000);
+</script>
+</body>
+</html>
